@@ -15,13 +15,13 @@ class RNNModelScratch:
         self.num_hiddens = num_hiddens
         self.device = device_name
         self.params  = self.params(vocab_size, num_hiddens, self.device)
-        self.state = (torch.zeros((batch_size, num_hiddens), device=device_name),)
+        # self.state = (torch.zeros((batch_size, num_hiddens), device=device_name),)
 
-    def __call__(self, inputs):
+    def __call__(self, inputs, state):
          inputs = F.one_hot(inputs.T, self.vocab_size).type(torch.float32)
          inputs = inputs.to(self.device)
          W_xh, W_hh, b_h, W_hq, b_q = self.params
-         H, = self.state
+         H, = state
          outputs = []
          for X in inputs:
             H = torch.tanh(torch.mm(X,W_xh) + torch.mm(H, W_hh) + b_h)
@@ -50,6 +50,9 @@ class RNNModelScratch:
         
         return params 
 
+def begin_state(batch_size, num_hiddens, device):
+    return (torch.zeros((batch_size, num_hiddens), device=device), )
+
 def grad_clipping(net, theta):  
     """裁剪梯度。"""
     if isinstance(net, nn.Module):
@@ -62,14 +65,32 @@ def grad_clipping(net, theta):
             param.grad[:] *= theta / norm
 
 
-def train_one_step(net, train_iter, loss, updater, lr, device):
+def predict_next_char(net, prefix, num_preds, num_hiddens, vocab, device):
+
+    state = begin_state(1, num_hiddens, device)
+    outputs = [vocab[prefix[0]]]
+    get_next =  lambda: torch.tensor([outputs[-1]], device=device).reshape((1,1))
+
+    for y in prefix[1:]:
+        _, state = net(get_next(), state)
+        outputs.append(vocab[y])
+    
+    for i in range(num_preds):
+        y, state  = net(get_next(), state)
+        outputs.append(int(y.argmax(dim=1).reshape(1)))
+
+    return ''.join([vocab.idx_to_token[i] for i in outputs])
+
+
+
+def train_one_step(net, state, train_iter, loss, updater, lr, device):
     timer = d2l.Timer()
     metric = d2l.Accumulator(2)
     for X, Y in train_iter:
-        for s in net.state:
+        for s in state:
             s.detach()
         y = Y.T.reshape(-1).to(device)
-        l = loss(net(X)[0], y).mean()
+        l = loss(net(X, state)[0], y).mean()
         l.backward() 
         grad_clipping(net, 1)
         updater(batch_size=1)
@@ -77,16 +98,17 @@ def train_one_step(net, train_iter, loss, updater, lr, device):
     return math.exp(metric[0]/ metric[1]), metric[1] / timer.stop()
 
 
-def train_rnn(net, train_iter, loss, updater, lr, device, epoch):
-    # loss = nn.CrossEntropyLoss()
-    # updater = torch.optim.SGD(net.parameters(), lr)
+def train_rnn(net, state,  train_iter, loss, updater, lr, device, epoch):
     animator = d2l.Animator(xlabel='epoch', ylabel='perplexity',
                             legend=['train'], xlim=[10, epoch])
+    predict = lambda prefix: predict_next_char(net, prefix, 50, num_hiddens, vocab, device)
     for epoch in range(epoch):
-        # print(epoch)
-        ppl, speed = train_one_step(net, train_iter, loss, updater, lr, device)
-
+        ppl, speed = train_one_step(net, state, train_iter, loss, updater, lr, device)
+        # print(predict('time traveller'))
+        animator.add(epoch + 1, [ppl])
     print(f'困惑度 {ppl:.1f}, {speed:.1f} 标记/秒 {str(device)}')
+    print(predict('time traveller'))
+    print(predict('traveller'))
 
 
 batch_size = 32
@@ -96,12 +118,12 @@ lr = 1
 epoch = 500
 
 train_iter, vocab = d2l.load_data_time_machine(batch_size, num_steps)
-
 test_rnn = RNNModelScratch(batch_size, len(vocab), num_hiddens, d2l.try_gpu())
 loss = nn.CrossEntropyLoss()
 updater = lambda batch_size: d2l.sgd(test_rnn.params, lr, batch_size)
+state = begin_state(batch_size, num_hiddens, d2l.try_gpu())
 
-train_rnn(test_rnn, train_iter, loss, updater, lr, d2l.try_gpu(), epoch)
+train_rnn(test_rnn, state, train_iter, loss, updater, lr, d2l.try_gpu(), epoch)
 
 
 
@@ -158,19 +180,19 @@ train_rnn(test_rnn, train_iter, loss, updater, lr, d2l.try_gpu(), epoch)
 
 
 
-# # def predict_ch8(prefix, num_preds, net, vocab, device):  
-# #     """在`prefix`后面生成新字符。"""
-# #     state = net.begin_state(batch_size=1, device=device)
-# #     outputs = [vocab[prefix[0]]]
-# #     get_input = lambda: torch.tensor([outputs[-1]], device=device).reshape(
-# #         (1, 1))
-# #     for y in prefix[1:]:
-# #         _, state = net(get_input(), state)
-# #         outputs.append(vocab[y])
-# #     for _ in range(num_preds):
-# #         y, state = net(get_input(), state)
-# #         outputs.append(int(y.argmax(dim=1).reshape(1)))
-# #     return ''.join([vocab.idx_to_token[i] for i in outputs])
+# def predict_ch8(prefix, num_preds, net, vocab, device):  
+#     """在`prefix`后面生成新字符。"""
+#     state = net.begin_state(batch_size=1, device=device)
+#     outputs = [vocab[prefix[0]]]
+#     get_input = lambda: torch.tensor([outputs[-1]], device=device).reshape(
+#         (1, 1))
+#     for y in prefix[1:]:
+#         _, state = net(get_input(), state)
+#         outputs.append(vocab[y])
+#     for _ in range(num_preds):
+#         y, state = net(get_input(), state)
+#         outputs.append(int(y.argmax(dim=1).reshape(1)))
+#     return ''.join([vocab.idx_to_token[i] for i in outputs])
 
 
 # def grad_clipping(net, theta):  
@@ -226,13 +248,16 @@ train_rnn(test_rnn, train_iter, loss, updater, lr, d2l.try_gpu(), epoch)
 #         updater = torch.optim.SGD(net.parameters(), lr)
 #     else:
 #         updater = lambda batch_size: d2l.sgd(net.params, lr, batch_size)
-#     # predict = lambda prefix: predict_ch8(prefix, 50, net, vocab, device)
+#     predict = lambda prefix: predict_ch8(prefix, 50, net, vocab, device)
 #     for epoch in range(num_epochs):
 #         ppl, speed = train_epoch_ch8(net, train_iter, loss, updater, device,
 #                                      use_random_iter)
 #         if (epoch + 1) % 10 == 0:
+#             print(predict('time traveller'))
 #             animator.add(epoch + 1, [ppl])
 #     print(f'困惑度 {ppl:.1f}, {speed:.1f} 标记/秒 {str(device)}')
+#     print(predict('time traveller'))
+#     print(predict('traveller'))
 
     
 # num_hiddens = 512
