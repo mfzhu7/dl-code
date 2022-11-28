@@ -1,7 +1,3 @@
-## 本文件实现了基础版本的循环神经网络，参考代码来源于李沐老师
-## 数据集也参考来自李沐老师的代码
-
-
 import math
 import torch
 from torch import nn
@@ -9,49 +5,63 @@ from torch.nn import functional as F
 from d2l import torch as d2l
 
 
-class RNNModelScratch:
+class LSTMModelScratch:
     def __init__(self, batch_size, vocab_size, num_hiddens, device_name):
         self.vocab_size = vocab_size 
         self.num_hiddens = num_hiddens
         self.device = device_name
         self.params  = self.params(vocab_size, num_hiddens, self.device)
-        # self.state = (torch.zeros((batch_size, num_hiddens), device=device_name),)
 
     def __call__(self, inputs, state):
          inputs = F.one_hot(inputs.T, self.vocab_size).type(torch.float32)
          inputs = inputs.to(self.device)
-         W_xh, W_hh, b_h, W_hq, b_q = self.params
-         H, = state
+         W_xi, W_hi, b_i, W_xf, W_hf, b_f, W_xo, W_ho, b_o,  W_xc, W_hc, b_c, W_hq, b_q = self.params
+         H, C, = state
          outputs = []
          for X in inputs:
-            H = torch.tanh(torch.mm(X,W_xh) + torch.mm(H, W_hh) + b_h)
+            I = torch.sigmoid(torch.mm(X, W_xi) + torch.mm(H, W_hi) + b_i)
+            F = torch.sigmoid(torch.mm(X, W_xf) + torch.mm(H, W_hf) + b_f)
+            O = torch.sigmoid(torch.mm(X, W_xo) + torch.mm(H, W_ho) + b_o)
+
+            C_delta = torch.tanh(torch.mm(X, W_xc) + torch.mm(H, W_hc) + b_c)
+            C = F * C + I * C_delta
+            H = torch.tanh(C) * O
             Y = torch.mm(H,W_hq) + b_q
             outputs.append(Y)
-         return torch.cat(outputs, dim=0), (H,)
+         return torch.cat(outputs, dim=0), (H,C,)
 
 
-    def normal(self, shape):
-        return torch.randn(size=shape, device=self.device) * 0.01
+    def normal(self, shape, device):
+        return torch.randn(size=shape, device=device) * 0.01
+
+    def three(self, num_inputs, num_hiddens, device):
+        return torch.rand((num_inputs,num_hiddens), device=device) * 0.01,\
+               torch.rand((num_hiddens,num_hiddens), device=device) * 0.01, \
+               torch.zeros(num_hiddens, device=device)
+
 
     def params(self, vocab_size, num_hiddens, device):
         num_inputs = num_outputs = vocab_size
 
-        W_xh = self.normal((num_inputs, num_hiddens))
-        W_hh = self.normal((num_hiddens,num_hiddens))
-        b_h = torch.zeros(num_hiddens,device=self.device)
+        W_xi, W_hi, b_i = self.three(num_inputs, num_hiddens, device)
+        W_xf, W_hf, b_f = self.three(num_inputs, num_hiddens, device)
+        W_xo, W_ho, b_o = self.three(num_inputs, num_hiddens, device)
+        W_xc, W_hc, b_c = self.three(num_inputs, num_hiddens, device)
 
-        W_hq = self.normal((num_hiddens, num_outputs))
-        b_q = torch.zeros(num_outputs, device=self.device)
+        W_hq = self.normal((num_hiddens, num_outputs), device)
+        b_q  = torch.zeros(num_outputs, device=device)
 
-        params = [W_xh, W_hh, b_h, W_hq, b_q]
-
+        params = [W_xi, W_hi, b_i, W_xf, W_hf, b_f, W_xo, W_ho, b_o,  W_xc, W_hc, b_c, W_hq, b_q]
         for param in params:
             param.requires_grad_(True)
-        
         return params 
 
 def begin_state(batch_size, num_hiddens, device):
-    return (torch.zeros((batch_size, num_hiddens), device=device), )
+    return (torch.zeros((batch_size, num_hiddens), device=device),torch.zeros((batch_size, num_hiddens), device=device), )
+
+
+
+
 
 def grad_clipping(net, theta):  
     """裁剪梯度。"""
@@ -118,10 +128,9 @@ lr = 1
 epoch = 500
 
 train_iter, vocab = d2l.load_data_time_machine(batch_size, num_steps)
-test_rnn = RNNModelScratch(batch_size, len(vocab), num_hiddens, d2l.try_gpu())
+test_rnn = LSTMModelScratch(batch_size, len(vocab), num_hiddens, d2l.try_gpu())
 loss = nn.CrossEntropyLoss()
 updater = lambda batch_size: d2l.sgd(test_rnn.params, lr, batch_size)
 state = begin_state(batch_size, num_hiddens, d2l.try_gpu())
 
 train(test_rnn, state, train_iter, loss, updater, lr, d2l.try_gpu(), epoch)
-
