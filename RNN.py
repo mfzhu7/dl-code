@@ -125,3 +125,5 @@ state = begin_state(batch_size, num_hiddens, d2l.try_gpu())
 
 train(test_rnn, state, train_iter, loss, updater, lr, d2l.try_gpu(), epoch)
 
+
+test_rnn = nn.RNN()
