@@ -111,7 +111,7 @@ def train_seq2seq(net, data_iter, lr, num_epochs, tgt_vocab, device):
         f'tokens/sec on {str(device)}')
 
 
-embed_size, num_hiddens, num_layers, dropout = 32, 32, 2, 0.1
+embed_size, num_hiddens, num_layers, dropout = 30, 32, 2, 0.1
 # batch_size, num_steps = 64, 10
 batch_size, num_steps = 2, 10
 lr, num_epochs, device = 0.005, 300, d2l.try_gpu()
